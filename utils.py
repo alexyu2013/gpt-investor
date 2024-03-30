@@ -1,21 +1,38 @@
-from openai import OpenAI
-from dotenv import load_dotenv
-from pydantic import BaseModel
-from typing import List
-import yfinance as yf
-from datetime import datetime, timedelta
+from dataclasses import dataclass, field
+from typing import List, Dict, Optional
+import pandas as pd
+import asyncio
 import requests
 from bs4 import BeautifulSoup
-import json
+from datetime import datetime, timedelta
+
+from openai import OpenAI, AsyncOpenAI
+from dotenv import load_dotenv
+import yfinance as yf
 
 load_dotenv("env_variables.env")
-client = OpenAI()
+syncclient = OpenAI()
+asyncclient = AsyncOpenAI()
 
-class TickerList(BaseModel):
-    tickers_list: List[str]
+GPT_MODEL = "gpt-3.5-turbo-0125"
 
+@dataclass
+class TickerClass:
+    name: str
+    hist_data: Optional[pd.DataFrame] = field(default=None)
+    balance_sheet: Optional[pd.DataFrame] = field(default=None)
+    financials: Optional[pd.DataFrame] = field(default=None)
+    news: Optional[Dict] = field(default=None)
+    analyst_ratings: str = field(default=None)
+    price: float = field(default=None)
+    ######
+    sentiment_analysis: str = field(default=None)
+    industry_analysis: str = field(default=None)
+    final_analysis: str = field(default=None)
 
-def get_article_text(url):
+    
+
+def get_article_text(url: str) -> str:
     try:
         response = requests.get(url)
         soup = BeautifulSoup(response.content, 'html.parser')
@@ -24,7 +41,7 @@ def get_article_text(url):
     except:
         return "Error retrieving article text."
 
-def get_stock_data(ticker, years):
+def get_stock_data(ticker: str, years: int=10) -> tuple:
     end_date = datetime.now().date()
     start_date = end_date - timedelta(days=years*365)
 
@@ -44,63 +61,7 @@ def get_stock_data(ticker, years):
 
     return hist_data, balance_sheet, financials, news
 
-
-def generate_ticker_ideas(industry):
-    
-    messages = [
-        {
-            "role": "system",
-            "content": f"You are a financial analyst assistant. Generate a list of 3 ticker symbols for major companies in the {industry} industry, as a Python-parseable list."
-        },
-        {
-            "role": "user", "content": f"Please provide a list of 3 ticker symbols for major companies in the {industry} industry as a Python-parseable list. Only respond with the list, no other text."},
-    ]
-
-    response = client.chat.completions.create(
-        temperature = 0.1,
-        model="gpt-3.5-turbo-0125",
-        messages=messages,
-        functions=[
-            {
-            "name": "Stock_Ticker_Generator",
-            "description": "Generate a list of 3 ticker symbols for major companies",
-            "parameters": TickerList.model_json_schema()
-            }
-        ],
-        function_call={"name": "Stock_Ticker_Generator"}
-    )
-
-
-    return json.loads(response.choices[0].message.function_call.arguments)['tickers_list']
-
-def get_sentiment_analysis(ticker, news):
-
-    news_text = ""
-    for article in news:
-        article_text = get_article_text(article['link'])
-        timestamp = datetime.fromtimestamp(article['providerPublishTime']).strftime("%Y-%m-%d")
-        news_text += f"\n\n---\n\nDate: {timestamp}\nTitle: {article['title']}\nText: {article_text}"
-
-    messages = [
-        {
-            "role": "system",
-            "content": f"You are a sentiment analysis assistant. Analyze the sentiment of the given news articles for {ticker} and provide a summary of the overall sentiment and any notable changes over time. Be measured and discerning. You are a skeptical investor."
-        },
-        {
-            "role": "user", 
-            "content": f"News articles for {ticker}:\n{news_text}\n\n----\n\nProvide a summary of the overall sentiment and any notable changes over time."},
-    ]
-
-    
-    response = client.chat.completions.create(
-        temperature = 0.1,
-        model="gpt-3.5-turbo-0125",
-        messages=messages
-    )
-    
-    return response
-
-def get_analyst_ratings(ticker):
+def get_analyst_ratings(ticker: str) -> str:
     stock = yf.Ticker(ticker)
     recommendations = stock.get_recommendations()
     if recommendations is None or recommendations.empty:
@@ -108,14 +69,51 @@ def get_analyst_ratings(ticker):
 
     latest_rating = recommendations.iloc[0]
 
+
     rating_summary = f"Latest analyst rating for {ticker}:\n {str(latest_rating.to_dict())}"
 
     return rating_summary
 
-
-def get_industry_analysis(ticker):
-
+def get_current_price(ticker :str) -> float:
     stock = yf.Ticker(ticker)
+    data = stock.history(period='1d')
+    return data.iloc[0]['Close']
+
+
+async def get_sentiment_analysis(ticker: TickerClass) -> None:
+    print(f"analyzing sentiment for {ticker.name}")
+
+    news_text = ""
+    for article in ticker.news:
+        article_text = get_article_text(article['link'])
+        timestamp = datetime.fromtimestamp(article['providerPublishTime']).strftime("%Y-%m-%d")
+        news_text += f"\n\n---\n\nDate: {timestamp}\nTitle: {article['title']}\nText: {article_text}"
+
+    messages = [
+        {
+            "role": "system",
+            "content": f"You are a sentiment analysis assistant. Analyze the sentiment of the given news articles for {ticker.name} and provide a summary of the overall sentiment and any notable changes over time. Be measured and discerning. You are a skeptical investor."
+        },
+        {
+            "role": "user", 
+            "content": f"News articles for {ticker.name}:\n{news_text}\n\n----\n\nProvide a summary of the overall sentiment and any notable changes over time."},
+    ]
+
+    
+    response = await asyncclient.chat.completions.create(
+        temperature = 0.1,
+        model=GPT_MODEL,
+        messages=messages
+    )
+    
+    ticker.sentiment_analysis = response.choices[0].message.content
+
+
+
+
+async def get_industry_analysis(ticker: TickerClass) -> None:
+    print(f"Industry analysis for {ticker.name}")
+    stock = yf.Ticker(ticker.name)
     industry = stock.info['industry']
     sector = stock.info['sector']
 
@@ -131,48 +129,43 @@ def get_industry_analysis(ticker):
     ]
 
     
-    response = client.chat.completions.create(
+    response = await asyncclient.chat.completions.create(
         temperature = 0.1,
-        model="gpt-3.5-turbo-0125",
+        model=GPT_MODEL,
         messages=messages
     )
     
-    return response.choices[0].message.content
+    ticker.industry_analysis = response.choices[0].message.content
 
-def get_final_analysis(ticker, sentiment_analysis, analyst_ratings, industry_analysis):
-
-
+#def get_final_analysis(ticker: str, sentiment_analysis: str, analyst_ratings :str, industry_analysis: str) -> str:
+async def get_final_analysis(ticker: TickerClass) -> None:
+    print(f"Final analysis for {ticker.name}")
     messages = [
         {
             "role": "system",
-            "content": f"You are a financial analyst providing a final investment recommendation for {ticker} based on the given data and analyses. Be measured and discerning. Truly think about the positives and negatives of the stock. Be sure of your analysis. You are a skeptical investor."
+            "content": f"You are a financial analyst providing a final investment recommendation for {ticker.name} based on the given data and analyses. Be measured and discerning. Truly think about the positives and negatives of the stock. Be sure of your analysis. You are a skeptical investor."
         },
         {
             "role": "user", 
-            "content": f"Ticker: {ticker}\n\nSentiment Analysis:\n{sentiment_analysis}\n\nAnalyst Ratings:\n{analyst_ratings}\n\nIndustry Analysis:\n{industry_analysis}\n\nBased on the provided data and analyses, please provide a comprehensive investment analysis and recommendation for {ticker}. Consider the company's financial strength, growth prospects, competitive position, and potential risks. Provide a clear and concise recommendation on whether to buy, hold, or sell the stock, along with supporting rationale."}
+            "content": f"Ticker: {ticker.name}\n\nSentiment Analysis:\n{ticker.sentiment_analysis}\n\nLatest Analyst Ratings:\n{ticker.analyst_ratings}\n\nIndustry Analysis:\n{ticker.industry_analysis}\n\nBased on the provided data and analyses, please provide a comprehensive investment analysis and recommendation for {ticker.name}. Consider the company's financial strength, growth prospects, competitive position, and potential risks. Provide a clear and concise recommendation on whether to buy, hold, or sell the stock, along with supporting rationale."}
     ]
 
     
-    response = client.chat.completions.create(
+    response = await asyncclient.chat.completions.create(
         temperature = 0.1,
-        model="gpt-3.5-turbo-0125",
+        model=GPT_MODEL,
         messages=messages
     )
     
-    return response.choices[0].message.content
-
-def get_current_price(ticker):
-    stock = yf.Ticker(ticker)
-    data = stock.history(period='1d', interval='1m')
-    return data['Close'][-1]
+    ticker.final_analysis = response.choices[0].message.content
 
 
-def rank_companies(industry, analyses, prices):
 
-    analysis_text = "\n\n".join(
-        f"Ticker: {ticker}\nCurrent Price: {prices.get(ticker, 'N/A')}\nAnalysis:\n{analysis}"
-        for ticker, analysis in analyses.items()
-    )
+
+def rank_companies(ticker_info_list: List[TickerClass], industry: str) -> str:
+    print(f"Ranking ...")
+    analysis_text = "\n\n".join(f"Ticker: {ticker.name}\nCurrent Price: {ticker.price}\nAnslysis:\n{ticker.final_analysis}" for ticker in ticker_info_list)
+    analysis_text = analysis_text
 
 
     messages = [
@@ -186,38 +179,36 @@ def rank_companies(industry, analyses, prices):
     ]
 
     
-    response = client.chat.completions.create(
+    response = syncclient.chat.completions.create(
         temperature = 0.1,
-        model="gpt-3.5-turbo-0125",
+        model=GPT_MODEL,
         messages=messages
     )
     
     return response.choices[0].message.content
 
 
-def get_openai_verdict(tickers, industry):
 
-    analyses = {}
-    prices = {}
+async def get_openai_verdict_2(tickers, industry):
+    ticker_info_list = []
     for ticker in tickers:
-        try:
-            print(f"\nAnalyzing {ticker}...")
-            hist_data, balance_sheet, financials, news = get_stock_data(ticker=ticker, years=1)
-            
-            #this
-            sentiment_analysis = get_sentiment_analysis(ticker, news)
-            analyst_ratings = get_analyst_ratings(ticker)
+        temp_ticker_info = TickerClass(name = ticker)
+        temp_ticker_info.hist_data, temp_ticker_info.balance_sheet, temp_ticker_info.financials, temp_ticker_info.news = get_stock_data(ticker, years=1)
 
-            #this
-            industry_analysis = get_industry_analysis(ticker)
+        temp_ticker_info.analyst_ratings = get_analyst_ratings(ticker)
+        temp_ticker_info.price = get_current_price(ticker)
+        ticker_info_list.append(temp_ticker_info)
 
-            #this
-            final_analysis = get_final_analysis(ticker, sentiment_analysis, analyst_ratings, industry_analysis)
-            
-            analyses[ticker] = final_analysis
-            prices[ticker] = get_current_price(ticker)
-        except:
-            pass
+    tasks1 = [get_sentiment_analysis(ticker_object) for ticker_object in ticker_info_list]
+    await asyncio.gather(*tasks1)
+
+    tasks2 = [get_industry_analysis(ticker_object) for ticker_object in ticker_info_list]
+    await asyncio.gather(*tasks2)
+
+    tasks3 = [get_final_analysis(ticker_object) for ticker_object in ticker_info_list]
+    await asyncio.gather(*tasks3)
+
+    final_ranking = rank_companies(ticker_info_list, industry)
+    return final_ranking
     
-    ranking = rank_companies(industry, analyses, prices)
-    return ranking
+

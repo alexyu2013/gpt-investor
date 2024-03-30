@@ -1,20 +1,28 @@
 import gradio as gr
-from utils import get_openai_verdict
+from utils import get_openai_verdict_2
+import argparse
 
 
-max_tickers = 10
+parser = argparse.ArgumentParser(description='Stock Analysis Tool')
+parser.add_argument('--max_tickers', type=int, default=5, help='Maximum number of tickers')
+args = parser.parse_args()
+
+max_tickers = args.max_tickers
+
 
 def variable_inputs(k):
 
     k = int(k)
     return [gr.Textbox(visible=True)] * k + [gr.Textbox(visible=False)] * (max_tickers - k)
 
-def analyze_stocks(*args):
+async def analyze_stocks(*args):
     industry_input = args[-1]
     tickers = args[:-1]
     
-    # Process tickers
-    result = get_openai_verdict(tickers, industry_input)
+    tickers = [ticker for ticker in tickers if ticker]
+    
+    # Process tickers asynchronously
+    result = await get_openai_verdict_2(tickers, industry_input)
     
     return result
 
@@ -30,9 +38,9 @@ with gr.Blocks() as demo:
             num_tickers_slider.change(variable_inputs, num_tickers_slider, ticker_inputs)
 
         with gr.Column():
-            output_text = gr.Textbox(label="Concatenated Stock Tickers")
+            output_text = gr.Textbox(label="OpenAI Analysis")
 
-            concat_btn = gr.Button("Concatenate Tickers")
+            concat_btn = gr.Button("Analyze Stocks with OpenAI")
     
     
     
