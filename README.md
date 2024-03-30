@@ -2,10 +2,12 @@
 
 This is a fork of [gpt investor](https://github.com/mshumer/gpt-investor) by [![Twitter Follow](https://img.shields.io/twitter/follow/mattshumer_?style=social)](https://twitter.com/mattshumer_). 
 
+The code uses OpenAI API instead of Claude, replaces synchronous API calls with asynchronous ones, and adds a Gradio UI.
+
 To use the Gradio UI, follow these steps:
 
 ```
-conda create --name gptinvestor python=4.10
+conda create --name gptinvestor python=3.10
 conda activate gptinvestor
 pip install -r requirements.txt
 ```
