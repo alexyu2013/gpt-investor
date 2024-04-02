@@ -1,6 +1,6 @@
 # gpt-investor
 
-This is a fork of [gpt investor](https://github.com/mshumer/gpt-investor) by [![Twitter Follow](https://img.shields.io/twitter/follow/mattshumer_?style=social)](https://twitter.com/mattshumer_). 
+This is a fork of [gpt investor](https://github.com/mshumer/gpt-investor) .
 
 The code uses OpenAI API instead of Claude, replaces synchronous API calls with asynchronous ones, and adds a Gradio UI.
 
